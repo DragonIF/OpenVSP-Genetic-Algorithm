@@ -119,14 +119,19 @@ for iteration in range(ITERATOR_LIMITER):
 
     # Sort scores by score
     scores.sort(key=lambda x: x[0], reverse=True)
+    print(scores)
 
     # Select the top-performing elements
     selected_elements = [elem for _, elem in scores[:(len(population)//2)]]
+    print(selected_elements)
 
     # Extract and store scores for the selected elements
     selected_scores = [score for score, _ in scores[:(len(population)//2)]]
-    best_scores.extend(zip(selected_scores, selected_elements))
+    print(selected_scores)
 
+    best_scores = list(zip(selected_scores, selected_elements))
+    print(best_scores)
+    input()
     if iteration == ITERATOR_LIMITER-1:
         continue
 
@@ -136,11 +141,7 @@ for iteration in range(ITERATOR_LIMITER):
     # Replace worst-scoring elements
     population = selected_elements + new_elements
 
-# Sort best_scores based on scores
-best_scores.sort(key=lambda x: x[0])
 
-# Keep the top N best-scoring elements
-best_scores = best_scores[:TOP_N_SCORES]
 
 # Extract parameters for the winner
 winner_params = [param for param in best_scores[0][1].values()]
