@@ -1,14 +1,61 @@
 import openvsp as vsp
 import random
+from datetime import datetime
+from time import perf_counter
 
-ITERATOR_LIMITER = int(input("how many iterations you wish to do?\n>"))
-TOP_N_SCORES = int(input("Enter the number of top scores to keep:\n>"))
 
 SECTION_LIMIT = 0.85
 TIP_CHORD_LIMITS = (0.18, 0.2)
 SWEEP_LOC_LIMITS = (0, 0.4)
-
 MACH_SPEED = [0.029]
+
+
+def initialize_population(n):
+    if n%2 != 0:
+        n += 1
+        print("adding another extra element because the population size is odd")
+
+    population = []
+    for _ in range(n):
+        # Generation random elements
+        population.append(
+            {
+                'span': round(random.uniform(0.085, 0.765), 2),
+                'tip_chord': round(random.uniform(TIP_CHORD_LIMITS[0], TIP_CHORD_LIMITS[1]), 2),
+                'sweep_loc': round(random.uniform(SWEEP_LOC_LIMITS[0], SWEEP_LOC_LIMITS[1]), 2)
+            }
+        )
+    return population
+
+population = initialize_population(int(input("how many elements should be started for evolution?\n>")))
+
+ITERATOR_LIMITER = int(input("how many iterations you wish to do?\n>"))
+TOP_N_SCORES = int(input("Enter the number of top scoring wings to keep:\n>"))
+CURRENT_DATETIME = datetime.now().strftime("%d%m%Y_%H_%M_%S")
+
+log = open(f"{CURRENT_DATETIME}.txt", "w")
+
+
+def show_population(population):
+    for i, element in enumerate(population):
+        print(f"element {i} = span: {element['span']},"
+              f" tip_chord: {element['tip_chord']}, sweep_loc: {element['sweep_loc']}")
+
+
+def mutate(element):
+    # Introduce slight variations to the parameters
+    mutated_element = {
+        'span': element['span'] + (element['span'] * random.uniform(-0.05, 0.05)),
+        'tip_chord': element['tip_chord'] + (element['tip_chord'] * random.uniform(-0.05, 0.05)),
+        'sweep_loc': element['sweep_loc'] + (element['sweep_loc'] * random.uniform(-0.05, 0.05))
+    }
+
+    # Ensure parameters are within the specified ranges
+    mutated_element['span'] = max(min(mutated_element['span'], 0.765), 0.085)
+    mutated_element['tip_chord'] = max(min(mutated_element['tip_chord'], TIP_CHORD_LIMITS[1]), TIP_CHORD_LIMITS[0])
+    mutated_element['sweep_loc'] = max(min(mutated_element['sweep_loc'], SWEEP_LOC_LIMITS[1]), SWEEP_LOC_LIMITS[0])
+
+    return mutated_element
 
 
 def wing_modifier(span, tip_c, sweep_loc, save=False):
@@ -28,21 +75,10 @@ def wing_modifier(span, tip_c, sweep_loc, save=False):
         vsp.WriteVSPFile("test_wing.vsp3", vsp.SET_ALL)
 
 
-best_scores = []
-
-# How to get the wing score:
-
-for iteration in range(ITERATOR_LIMITER):
-    # Generate random parameters within the specified limits
-    span = random.uniform(*(0.085, 0.765))
-    tip_c = random.uniform(*TIP_CHORD_LIMITS)
-    sweep_loc = random.uniform(*SWEEP_LOC_LIMITS)
-
-    # Truncate parameters to 0.01
-    span, tip_c, sweep_loc = round(span, 2), round(tip_c, 2), round(sweep_loc, 2)
+def get_score(element):
 
     # Modify the wing and run the analysis
-    wing_modifier(span, tip_c, sweep_loc)
+    wing_modifier(element["span"], element["tip_chord"], element["sweep_loc"])
 
     vsp.DeleteAllResults()
     comp_geom = "VSPAEROComputeGeometry"
@@ -53,7 +89,11 @@ for iteration in range(ITERATOR_LIMITER):
     vsp.SetIntAnalysisInput(comp_geom, "AnalysisMethod", (1, vsp.VORTEX_LATTICE))
     vsp.SetDoubleAnalysisInput(analysis_name, "MachStart", MACH_SPEED, 0)
     vsp.SetDoubleAnalysisInput(analysis_name, "AlphaEnd", [1.00], 0)
+
+    start_time = perf_counter()
     vsp.ExecAnalysis(analysis_name)
+    end_time = perf_counter()
+    log.write(f"Simulation time {end_time - start_time}")
 
     point_id = vsp.FindResultsID("point")
     polar_id = vsp.FindResultsID("VSPAERO_Polar")
@@ -65,20 +105,55 @@ for iteration in range(ITERATOR_LIMITER):
     scores = [(cl_value * l_d_value) / area[0] for cl_value, l_d_value in zip(cl, l_d)]
     final_score = sum(scores) / len(scores)
 
-    # Add the current parameters and score to the list
-    best_scores.append((final_score, (span, tip_c, sweep_loc)))
-
-    # Sort the list by score and keep only the top N scores
-    best_scores = sorted(best_scores, key=lambda x: x[0], reverse=True)[:TOP_N_SCORES]
+    return final_score
 
 
-winner_params = best_scores[0][-1]
+best_scores = []
+
+# How to get the wing score:
+
+
+for iteration in range(ITERATOR_LIMITER):
+    # Compute scores for the population
+    scores = [(get_score(element), element) for element in population]
+
+    # Sort scores by score
+    scores.sort(key=lambda x: x[0], reverse=True)
+
+    # Select the top-performing elements
+    selected_elements = [elem for _, elem in scores[:(len(population)//2)]]
+
+    # Extract and store scores for the selected elements
+    selected_scores = [score for score, _ in scores[:(len(population)//2)]]
+    best_scores.extend(zip(selected_scores, selected_elements))
+
+    if iteration == ITERATOR_LIMITER-1:
+        continue
+
+    # Apply mutation to create new elements
+    new_elements = [mutate(element) for element in selected_elements]
+
+    # Replace worst-scoring elements
+    population = selected_elements + new_elements
+
+# Sort best_scores based on scores
+best_scores.sort(key=lambda x: x[0])
+
+# Keep the top N best-scoring elements
+best_scores = best_scores[:TOP_N_SCORES]
+
+# Extract parameters for the winner
+winner_params = [param for param in best_scores[0][1].values()]
 wing_modifier(winner_params[0], winner_params[1], winner_params[2], True)
 
-
+file = open("results.txt", "w")
 # Print the top N parameters and scores
 for i, (score, params) in enumerate(best_scores):
     print(f"Rank {i + 1}: Parameters {params} | Score {score}")
+    file.write(f"Rank {i + 1}:\n\nScore: {score}\nParameters: {params}\n\n\n")
+file.close()
+log.close()
+
 
 # print(best_scores)
 
